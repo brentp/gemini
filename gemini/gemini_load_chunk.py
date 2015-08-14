@@ -9,7 +9,7 @@ import shutil
 import uuid
 
 # third-party imports
-import cyvcf as vcf
+import cyvcf2 as vcf
 
 # gemini modules
 import version
@@ -139,7 +139,8 @@ class GeminiLoader(object):
                 continue
             (variant, variant_impacts, extra_fields) = self._prepare_variation(var)
             if extra_fields:
-                var.INFO.update(extra_fields)
+                # TODO: update writer header??
+                #var.INFO.update(extra_fields)
                 self.extra_vcf_writer.write_record(var)
                 extra_vcf_fields.update(extra_fields.keys())
             # add the core variant info to the variant buffer
@@ -171,12 +172,23 @@ class GeminiLoader(object):
             sys.stderr.write("pid " + str(os.getpid()) + ": " +
                              str(self.skipped) + " skipped due to having the "
                              "FILTER field set.\n")
-        self.extra_vcf_writer.stream.close()
+        try: # cyvcf
+            self.extra_vcf_writer.stream.close()
+        except: # cyvcf2
+            self.extra_vcf_writer.close()
+
         if len(extra_vcf_fields) == 0:
-            os.unlink(self.extra_vcf_writer.stream.name)
+            try: # cyvcf
+                os.unlink(self.extra_vcf_writer.stream.name)
+            except: # cyvcf2
+                os.unlink(self.extra_vcf_writer.name)
         else:
-            with open(self.extra_vcf_writer.stream.name + ".fields", "w") as o:
-                o.write("\n".join(list(extra_vcf_fields)))
+            try: #cyvcf
+                with open(self.extra_vcf_writer.stream.name + ".fields", "w") as o:
+                    o.write("\n".join(list(extra_vcf_fields)))
+            except: #cyvcf2
+                with open(self.extra_vcf_writer.name + ".fields", "w") as o:
+                    o.write("\n".join(list(extra_vcf_fields)))
 
     def _update_extra_headers(self, headers, cur_fields):
         """Update header information for extra fields.
@@ -210,6 +222,7 @@ class GeminiLoader(object):
 
     def _get_vcf_reader(self):
         # the VCF is a proper file
+        return vcf.VCFReader(self.args.vcf)
         if self.args.vcf != "-":
             if self.args.vcf.endswith(".gz"):
                 return vcf.VCFReader(open(self.args.vcf), 'rb', compressed=True)
@@ -229,7 +242,7 @@ class GeminiLoader(object):
 
         if self.args.anno_type == "snpEff":
             try:
-                version_string = self.vcf_reader.metadata['SnpEffVersion']
+                version_string = self.vcf_reader['SnpEffVersion']['SnpEffVersion']
             except KeyError:
                 error = ("\nWARNING: VCF is not annotated with snpEff, check documentation at:\n"\
                 "http://gemini.readthedocs.org/en/latest/content/functional_annotation.html#stepwise-installation-and-usage-of-snpeff\n")
@@ -259,8 +272,8 @@ class GeminiLoader(object):
         """
         required = ["Consequence"]
         expected = "Consequence|Codons|Amino_acids|Gene|SYMBOL|Feature|EXON|PolyPhen|SIFT|Protein_position|BIOTYPE".upper()
-        if 'CSQ' in reader.infos:
-            parts = str(reader.infos["CSQ"].desc).split("Format: ")[-1].split("|")
+        try:
+            parts = reader["CSQ"]["Description"].split("Format: ")[-1].split("|")
             all_found = True
             for check in required:
                 if check not in parts:
@@ -268,7 +281,9 @@ class GeminiLoader(object):
                     break
             if all_found:
                 return parts
-        # Did not find expected fields
+        except KeyError:
+            # Did not find expected fields
+            pass
         error = "\nERROR: Check gemini docs for the recommended VCF annotation with VEP"\
                 "\nhttp://gemini.readthedocs.org/en/latest/content/functional_annotation.html#stepwise-installation-and-usage-of-vep"
         sys.exit(error)
@@ -476,13 +491,18 @@ class GeminiLoader(object):
             gt_ref_depths = np.array(var.gt_ref_depths, np.int32)  # 2 21 0 -1
             gt_alt_depths = np.array(var.gt_alt_depths, np.int32)  # 8 16 0 -1
             gt_quals = np.array(var.gt_quals, np.float32)  # 10.78 22 99 -1
-            gt_copy_numbers = np.array(var.gt_copy_numbers, np.float32)  # 1.0 2.0 2.1 -1
-            gt_phred_likelihoods = get_phred_lik(var.gt_phred_likelihoods)
-            if gt_phred_likelihoods is not None:
-                gt_phred_ll_homref = gt_phred_likelihoods[:, 0]
-                gt_phred_ll_het = gt_phred_likelihoods[:, 1]
-                gt_phred_ll_homalt = gt_phred_likelihoods[:, 2]
-
+            #gt_copy_numbers = np.array(var.gt_copy_numbers, np.float32)  # 1.0 2.0 2.1 -1
+            gt_copy_numbers = None
+            try:
+                gt_phred_likelihoods = get_phred_lik(var.gt_phred_likelihoods)
+                if gt_phred_likelihoods is not None:
+                    gt_phred_ll_homref = gt_phred_likelihoods[:, 0]
+                    gt_phred_ll_het = gt_phred_likelihoods[:, 1]
+                    gt_phred_ll_homalt = gt_phred_likelihoods[:, 2]
+            except:
+                    gt_phred_ll_homref = var.gt_phred_ll_homref
+                    gt_phred_ll_het = var.gt_phred_ll_het
+                    gt_phred_ll_homalt = var.gt_phred_ll_homalt
             # tally the genotypes
             self._update_sample_gt_counts(gt_types)
         else:
