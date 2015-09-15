@@ -11,7 +11,6 @@ import subprocess
 from cluster_helper.cluster import cluster_view
 import database as gemini_db
 from gemini_load_chunk import GeminiLoader
-import gemini_annotate
 import uuid
 import time
 import datetime
@@ -51,11 +50,6 @@ def load(parser, args):
     else:
         load_singlecore(args)
 
-    if not args.no_bcolz:
-        from gemini.gemini_bcolz import create
-        create(args.db)
-
-
 def load_singlecore(args):
     # create a new gemini loader and populate
     # the gemini db and files from the VCF
@@ -64,6 +58,7 @@ def load_singlecore(args):
     gemini_loader.store_version()
     gemini_loader.store_vcf_header()
     gemini_loader.populate_from_vcf()
+    gemini_db.add_max_aaf(gemini_loader.c)
 
     if not args.skip_gene_tables and not args.test_mode:
         gemini_loader.update_gene_table()
@@ -73,38 +68,42 @@ def load_singlecore(args):
     if not args.no_genotypes and not args.no_load_genotypes:
         gemini_loader.store_sample_gt_counts()
 
-    gemini_annotate.add_extras(args.db, [args.db], region_only=False, tempdir=args.tempdir)
 
 def load_multicore(args):
     grabix_file = bgzip(args.vcf)
     chunks = load_chunks_multicore(grabix_file, args)
     merge_chunks_multicore(chunks, args)
-    gemini_annotate.add_extras(args.db, chunks, region_only=False, tempdir=args.tempdir)
 
 def load_ipython(args):
     grabix_file = bgzip(args.vcf)
     with cluster_view(*get_ipython_args(args)) as view:
         chunks = load_chunks_ipython(grabix_file, args, view)
         merge_chunks_ipython(chunks, args, view)
-    gemini_annotate.add_extras(args.db, chunks, region_only=False, tempdir=args.tempdir)
 
 def merge_chunks(chunks, db, kwargs):
-    cmd = get_merge_chunks_cmd(chunks, db, tempdir=kwargs.get("tempdir"))
+    cmd = get_merge_chunks_cmd(chunks, db, tempdir=kwargs.get("tempdir"),
+                               vcf=kwargs.get("vcf"), anno_type=kwargs.get("anno_type"))
     print "Merging chunks."
     subprocess.check_call(cmd, shell=True)
     cleanup_temp_db_files(chunks)
     return db
 
-def get_merge_chunks_cmd(chunks, db, tempdir=None):
+def get_merge_chunks_cmd(chunks, db, tempdir=None, vcf=None, anno_type=None):
     chunk_names = ""
     for chunk in chunks:
         chunk_names += " --chunkdb  " + chunk
 
-    tempdir_string = ""
+    tempdir_string, vcf_string, annotype_string = "", "", ""
     if tempdir is not None:
         tempdir_string = " --tempdir " + tempdir
+    if vcf is not None:
+        vcf_string = " --vcf " + vcf
+    if anno_type is not None:
+        annotype_string = " -t " + anno_type
 
-    return "gemini merge_chunks {chunk_names} {tempdir_string} --db {db}".format(**locals())
+    return ("gemini merge_chunks {chunk_names} {tempdir_string} "
+            "{vcf_string} {annotype_string} --db {db}").format(**locals())
+
 
 def finalize_merged_db(tmp_db, db):
     ts = time.time()
@@ -117,6 +116,7 @@ def finalize_merged_db(tmp_db, db):
     main_curr.execute('PRAGMA synchronous = OFF')
     main_curr.execute('PRAGMA journal_mode=MEMORY')
 
+    gemini_db.add_max_aaf(main_curr)
     gemini_db.create_indices(main_curr)
 
     main_conn.commit()
@@ -133,8 +133,8 @@ def merge_chunks_ipython(chunks, args, view):
         st = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S')
         print st, "merging", len(chunks), "chunks."
         sub_merges = get_chunks_to_merge(chunks)
-        tmp_dbs = get_temp_dbs(len(sub_merges), os.path.dirname(sub_merges[0][0]))
-        merge_args = {"tempdir": args.tempdir}
+        tmp_dbs = get_temp_dbs(len(sub_merges), os.getcwd())
+        merge_args = {"tempdir": args.tempdir, "vcf": args.vcf, "anno_type": args.anno_type}
         view.map(merge_chunks, sub_merges, tmp_dbs, [merge_args] * len(sub_merges))
         merge_chunks_ipython(tmp_dbs, args, view)
 
@@ -150,7 +150,8 @@ def merge_chunks_multicore(chunks, args):
         sub_merges = get_chunks_to_merge(chunks)
         tmp_dbs = get_temp_dbs(len(sub_merges), os.path.dirname(sub_merges[0][0]))
         for sub_merge, tmp_db in zip(sub_merges, tmp_dbs):
-            cmd = get_merge_chunks_cmd(sub_merge, tmp_db, tempdir=args.tempdir)
+            cmd = get_merge_chunks_cmd(sub_merge, tmp_db, tempdir=args.tempdir, vcf=args.vcf,
+                                       anno_type=args.anno_type)
             procs.append(subprocess.Popen(cmd, shell=True))
         wait_until_finished(procs)
         cleanup_temp_db_files(chunks)

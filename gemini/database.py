@@ -40,6 +40,7 @@ def index_variation(cursor):
     cursor.execute('''create index var_fitcons_idx on variants(fitcons)''')
     cursor.execute('''create index var_sv_event_idx on variants(sv_event_id)''')
     cursor.execute('''create index chrom_varid_idx on variants(chrom,variant_id)''')
+    cursor.execute('CREATE index max_aaf_all_idx on variants(max_aaf_all)')
 
 def index_variation_impacts(cursor):
     cursor.execute('''create index varimp_exonic_idx on \
@@ -86,12 +87,21 @@ def create_indices(cursor):
     index_gene_detailed(cursor)
     index_gene_summary(cursor)
 
+def add_max_aaf(cursor):
+    # see: https://github.com/arq5x/gemini/issues/520
+    # skip finns
+    cursor.execute('ALTER TABLE variants ADD COLUMN max_aaf_all')
+    cursor.execute('UPDATE variants set max_aaf_all = MAX(coalesce(aaf_esp_ea,-1), coalesce(aaf_esp_aa,-1), coalesce(aaf_1kg_amr,-1), coalesce(aaf_1kg_eas,-1), coalesce(aaf_1kg_sas,-1), coalesce(aaf_1kg_afr,-1), coalesce(aaf_1kg_eur,-1), coalesce(aaf_adj_exac_afr,-1), coalesce(aaf_adj_exac_amr,-1), coalesce(aaf_adj_exac_eas,-1), coalesce(aaf_adj_exac_nfe,-1), coalesce(aaf_adj_exac_sas,-1))')
 
-def create_tables(cursor):
+def create_tables(cursor, effect_fields=None):
     """
     Create our master DB tables
     """
-    cursor.execute('''create table if not exists variants (
+    if effect_fields:
+        effect_string = "".join(e + " TEXT,\n" for e in effect_fields)
+    else:
+        effect_string = ""
+    cmd = '''create table if not exists variants (
                     chrom text,
                     start integer,
                     end integer,
@@ -235,7 +245,9 @@ def create_tables(cursor):
                     aaf_adj_exac_nfe decimal(2,7),
                     aaf_adj_exac_oth decimal(2,7),
                     aaf_adj_exac_sas decimal(2,7),
-                    PRIMARY KEY(variant_id ASC))''')
+                    %s
+                    PRIMARY KEY(variant_id ASC))''' % effect_string
+    cursor.execute(cmd)
 
     cursor.execute('''create table if not exists variant_impacts  (
                     variant_id integer,

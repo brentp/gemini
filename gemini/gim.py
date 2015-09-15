@@ -115,6 +115,7 @@ class GeminiInheritanceModel(object):
         """
         from .family import Family
         self.families = families = Family.from_cursor(self.gq.c).values()
+        args = self.args
 
         self.family_ids = []
         self.family_masks = []
@@ -126,12 +127,16 @@ class GeminiInheritanceModel(object):
         elif self.model == "comp_het":
             kwargs['pattern_only'] = self.args.pattern_only
 
+        requested_fams = None if not args.families else set(args.families.split(","))
+
         for family in families:
-            # e.g. family.auto_rec(gt_ll, min_depth)
-            family_filter = getattr(family,
-                    self.model)(gt_ll=self.args.gt_phred_ll,
-                                min_depth=self.args.min_sample_depth,
-                                **kwargs)
+            if requested_fams is None or family.family_id in requested_fams:
+                # e.g. family.auto_rec(gt_ll, min_depth)
+                family_filter = getattr(family, self.model)(gt_ll=self.args.gt_phred_ll,
+                                    min_depth=self.args.min_sample_depth,
+                                    **kwargs)
+            else:
+                family_filter = 'False'
 
             self.family_masks.append(family_filter)
             self.family_ids.append(family.family_id)
@@ -347,6 +352,8 @@ class CompoundHet(GeminiInheritanceModel):
             comp_het_counter[0] += 1
 
             for fam_ch in candidates[comp_het]:
+                if fam_ch['priority'] > args.max_priority:
+                    continue
                 # when to use affected_unphased?
                 for subject in (fam_ch['candidates'] if args.pattern_only else fam_ch['affected_phased'] + fam_ch['affected_unphased']):
                     family_id = subject.family_id
@@ -378,6 +385,9 @@ class CompoundHet(GeminiInheritanceModel):
         from .family import Family
         self.gq._connect_to_database()
         fams = self.fams = Family.from_cursor(self.gq.c)
+
+        if args.families:
+            fams = {f: fam for f, fam in fams.items() if f in set(args.families.split(","))}
 
         for grp, li in self.gen_candidates('gene'):
             samples_w_hetpair = defaultdict(list)

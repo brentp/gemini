@@ -6,6 +6,7 @@ import sys
 import uuid
 
 import database as gemini_db
+import gemini_load_chunk
 
 
 def append_variant_info(main_curr, chunk_db):
@@ -176,7 +177,7 @@ def merge_db_chunks(args):
     main_curr.execute('PRAGMA synchronous = OFF')
     main_curr.execute('PRAGMA journal_mode=MEMORY')
     # create the gemini database tables for the new DB
-    gemini_db.create_tables(main_curr)
+    gemini_db.create_tables(main_curr, gemini_load_chunk.get_extra_effects_fields(args) if args.vcf else [])
 
     databases = []
     for database in args.chunkdbs:
@@ -208,6 +209,7 @@ def merge_db_chunks(args):
 
 
 def merge_chunks(parser, args):
+    errors = []
     for try_count in range(2):
         try:
             if try_count > 0:
@@ -228,8 +230,10 @@ def merge_chunks(parser, args):
                     os.remove(tmp_db)
             break
         except sqlite3.OperationalError, e:
+            errors.append(str(e))
             sys.stderr.write("sqlite3.OperationalError: %s\n" % e)
     else:
-        raise Exception(("Attempted workaround for SQLite locking issue on NFS "
-            "drives has failed. One possible reason is that the temp directory "
-            "%s is also on an NFS drive.") % args.tempdir)
+        raise Exception("Attempted workaround for SQLite locking issue on NFS "
+                        "drives has failed. One possible reason is that the temp directory "
+                        "%s is also on an NFS drive. Error messages from SQLite: %s"
+                        % (args.tempdir, " ".join(errors)))

@@ -47,21 +47,40 @@ def get_phred_lik(gt_phred_likelihoods, dtype=np.int32, empty_val=-1):
         return None
     return np.array(out, dtype=dtype)
 
+def get_extra_effects_fields(args):
+    """Retrieve additional effects fields contained in the VCF.
+
+    Useful for merging VEP databases with additional fields.
+    """
+    loader = GeminiLoader(args, prepare_db=False)
+    return loader._extra_effect_fields
 
 class GeminiLoader(object):
     """
     Object for creating and populating a gemini
     database and auxillary data files.
     """
-    def __init__(self, args, buffer_size=10000):
+    def __init__(self, args, buffer_size=10000, prepare_db=True):
         self.args = args
         self.seen_multi = False
 
         # create the gemini database
-        self._create_db()
         # create a reader for the VCF file
         self.vcf_reader = self._get_vcf_reader()
         # load sample information
+        expected = "consequence,codons,amino_acids,gene,symbol,feature,exon,polyphen,sift,protein_position,biotype,warning".split(",")
+
+        if self.args.anno_type == "VEP":
+            self._effect_fields = self._get_vep_csq(self.vcf_reader)
+            self._extra_effect_fields = [("vep_%s" % x) for x in self._effect_fields if not x.lower() in expected]
+            self._effect_fields = [x for x in self._effect_fields if x.lower() in expected]
+
+        else:
+            self._effect_fields = []
+            self._extra_effect_fields = []
+        if not prepare_db:
+            return
+        self._create_db(self._extra_effect_fields)
 
         if not self.args.no_genotypes and not self.args.no_load_genotypes:
             # load the sample info from the VCF file.
@@ -78,11 +97,6 @@ class GeminiLoader(object):
         if not args.skip_gene_tables:
             self._get_gene_detailed()
             self._get_gene_summary()
-
-        if self.args.anno_type == "VEP":
-            self._effect_fields = self._get_vep_csq(self.vcf_reader)
-        else:
-            self._effect_fields = []
 
     def store_vcf_header(self):
         """Store the raw VCF header.
@@ -117,20 +131,19 @@ class GeminiLoader(object):
     def populate_from_vcf(self):
         """
         """
-        import gemini_annotate as ga
-        extra_vcf_fields = set()
 
         self.v_id = self._get_vid()
         self.counter = 0
         self.var_buffer = []
         self.var_impacts_buffer = []
         self.skipped = 0
-
-        # we save the vcf in this chunk for extra annotations.
-        self.extra_vcf_writer = ga.get_extra_vcf(self.args.db, self.vcf_reader, tempdir=self.args.tempdir)
+        # need to keep the objects in memory since we just borrow it in python.
+        obj_buffer = []
 
         # process and load each variant in the VCF file
         for var in self.vcf_reader:
+            if not var.ALT or len(var.ALT) == 0:
+                continue
             if len(var.ALT) > 1 and not self.seen_multi:
                 self._multiple_alts_message()
 
@@ -138,11 +151,8 @@ class GeminiLoader(object):
                 self.skipped += 1
                 continue
             (variant, variant_impacts, extra_fields) = self._prepare_variation(var)
-            if extra_fields:
-                # TODO: update writer header??
-                #var.INFO.update(extra_fields)
-                self.extra_vcf_writer.write_record(var)
-                extra_vcf_fields.update(extra_fields.keys())
+            variant.extend(extra_fields.get(e) for e in self._extra_effect_fields)
+            obj_buffer.append(var)
             # add the core variant info to the variant buffer
             self.var_buffer.append(variant)
             # add each of the impact for this variant (1 per gene/transcript)
@@ -158,6 +168,7 @@ class GeminiLoader(object):
                                                   self.var_impacts_buffer)
                 # binary.genotypes.append(var_buffer)
                 # reset for the next batch
+                obj_buffer = []
                 self.var_buffer = []
                 self.var_impacts_buffer = []
             self.v_id += 1
@@ -172,23 +183,6 @@ class GeminiLoader(object):
             sys.stderr.write("pid " + str(os.getpid()) + ": " +
                              str(self.skipped) + " skipped due to having the "
                              "FILTER field set.\n")
-        try: # cyvcf
-            self.extra_vcf_writer.stream.close()
-        except: # cyvcf2
-            self.extra_vcf_writer.close()
-
-        if len(extra_vcf_fields) == 0:
-            try: # cyvcf
-                os.unlink(self.extra_vcf_writer.stream.name)
-            except: # cyvcf2
-                os.unlink(self.extra_vcf_writer.name)
-        else:
-            try: #cyvcf
-                with open(self.extra_vcf_writer.stream.name + ".fields", "w") as o:
-                    o.write("\n".join(list(extra_vcf_fields)))
-            except: #cyvcf2
-                with open(self.extra_vcf_writer.name + ".fields", "w") as o:
-                    o.write("\n".join(list(extra_vcf_fields)))
 
     def _update_extra_headers(self, headers, cur_fields):
         """Update header information for extra fields.
@@ -221,21 +215,11 @@ class GeminiLoader(object):
         database.close_and_commit(self.c, self.conn)
 
     def _get_vcf_reader(self):
-        # the VCF is a proper file
         return vcf.VCFReader(self.args.vcf)
-        if self.args.vcf != "-":
-            if self.args.vcf.endswith(".gz"):
-                return vcf.VCFReader(open(self.args.vcf), 'rb', compressed=True)
-            else:
-                return vcf.VCFReader(open(self.args.vcf), 'rb')
-        # the VCF is being passed in via STDIN
-        else:
-            return vcf.VCFReader(sys.stdin, 'rb')
 
     def _get_anno_version(self):
         """
-        Extract the snpEff or VEP version used
-        to annotate the VCF
+        Extract the snpEff or VEP version used to annotate the VCF
         """
         # default to unknown version
         self.args.version = None
@@ -252,7 +236,6 @@ class GeminiLoader(object):
             # or "3.3c (build XXXX), by Pablo Cingolani"
 
             version_string = version_string.replace('"', '')  # No quotes
-
             toks = version_string.split()
 
             if "SnpEff" in toks[0]:
@@ -273,7 +256,7 @@ class GeminiLoader(object):
         required = ["Consequence"]
         expected = "Consequence|Codons|Amino_acids|Gene|SYMBOL|Feature|EXON|PolyPhen|SIFT|Protein_position|BIOTYPE".upper()
         try:
-            parts = reader["CSQ"]["Description"].split("Format: ")[-1].split("|")
+            parts = reader["CSQ"]["Description"].strip().replace('"', '').split("Format: ")[-1].split("|")
             all_found = True
             for check in required:
                 if check not in parts:
@@ -288,7 +271,7 @@ class GeminiLoader(object):
                 "\nhttp://gemini.readthedocs.org/en/latest/content/functional_annotation.html#stepwise-installation-and-usage-of-vep"
         sys.exit(error)
 
-    def _create_db(self):
+    def _create_db(self, effect_fields=None):
         """
         private method to open a new DB
         and create the gemini schema.
@@ -303,7 +286,7 @@ class GeminiLoader(object):
         self.c.execute('PRAGMA synchronous = OFF')
         self.c.execute('PRAGMA journal_mode=MEMORY')
         # create the gemini database tables for the new DB
-        database.create_tables(self.c)
+        database.create_tables(self.c, effect_fields or [])
         database.create_sample_table(self.c, self.args)
 
     def _prepare_variation(self, var):
@@ -484,25 +467,18 @@ class GeminiLoader(object):
         gt_phred_ll_homref = gt_phred_ll_het = gt_phred_ll_homalt = None
 
         if not self.args.no_genotypes and not self.args.no_load_genotypes:
-            gt_bases = np.array(var.gt_bases, np.str)  # 'A/G', './.'
-            gt_types = np.array(var.gt_types, np.int8)  # -1, 0, 1, 2
-            gt_phases = np.array(var.gt_phases, np.bool)  # T F F
-            gt_depths = np.array(var.gt_depths, np.int32)  # 10 37 0
-            gt_ref_depths = np.array(var.gt_ref_depths, np.int32)  # 2 21 0 -1
-            gt_alt_depths = np.array(var.gt_alt_depths, np.int32)  # 8 16 0 -1
-            gt_quals = np.array(var.gt_quals, np.float32)  # 10.78 22 99 -1
+            gt_bases = var.gt_bases
+            gt_types = var.gt_types
+            gt_phases = var.gt_phases
+            gt_depths = var.gt_depths
+            gt_ref_depths = var.gt_ref_depths
+            gt_alt_depths = var.gt_alt_depths
+            gt_quals = var.gt_quals
             #gt_copy_numbers = np.array(var.gt_copy_numbers, np.float32)  # 1.0 2.0 2.1 -1
             gt_copy_numbers = None
-            try:
-                gt_phred_likelihoods = get_phred_lik(var.gt_phred_likelihoods)
-                if gt_phred_likelihoods is not None:
-                    gt_phred_ll_homref = gt_phred_likelihoods[:, 0]
-                    gt_phred_ll_het = gt_phred_likelihoods[:, 1]
-                    gt_phred_ll_homalt = gt_phred_likelihoods[:, 2]
-            except:
-                    gt_phred_ll_homref = var.gt_phred_ll_homref
-                    gt_phred_ll_het = var.gt_phred_ll_het
-                    gt_phred_ll_homalt = var.gt_phred_ll_homalt
+            gt_phred_ll_homref = var.gt_phred_ll_homref
+            gt_phred_ll_het = var.gt_phred_ll_het
+            gt_phred_ll_homalt = var.gt_phred_ll_homalt
             # tally the genotypes
             self._update_sample_gt_counts(gt_types)
         else:
@@ -512,7 +488,7 @@ class GeminiLoader(object):
         if self.args.skip_info_string:
             info = None
         else:
-            info = var.INFO
+            info = dict(var.INFO)
 
         # were functional impacts predicted by SnpEFF or VEP?
         # if so, build up a row for each of the impacts / transcript
@@ -774,7 +750,7 @@ def load(parser, args):
             gemini_loader.store_resources()
             gemini_loader.store_version()
             gemini_loader.store_vcf_header()
-            extra_fields = gemini_loader.populate_from_vcf()
+            gemini_loader.populate_from_vcf()
             gemini_loader.update_gene_table()
             # gemini_loader.build_indices_and_disconnect()
 
