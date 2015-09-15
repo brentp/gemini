@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 from __future__ import print_function
-from effects import SnpEff
+from effects import SnpEff, VEP
 
 # native Python imports
 import os.path
@@ -124,8 +124,11 @@ CREATE TABLE samples (
             fh = it.chain([lheader], fh)
         else:
             header = header + lheader[1:].strip().split()[6:]
-
-        create = create % (",\n    " + ",\n    ".join(("%s TEXT" % h) for h in header[6:]))
+        if len(header) > 6:
+            create = create % (",\n    " + ",\n    ".join(("%s TEXT" % h) for h in header[6:]))
+        else:
+            create = create % ""
+        print(create)
         self.cursor.execute(create)
 
         inserts = []
@@ -224,8 +227,9 @@ CREATE table variants (
         # TODO: pull the columns from the table and use a dict. To hard to track
         # 140 columns.
         for i, v in enumerate(self.vcf_reader, start=1):
+            info = v.INFO
             t0 = time.time()
-            vals = [v.INFO_get(f, '' if t == 'TEXT' else False if t == 'BOOL' else  None) for t, f in ots]
+            vals = [info.get(f, '' if t == 'TEXT' else False if t == 'BOOL' else  None) for t, f in ots]
             igt += time.time() - t0
 
             t0 = time.time()
@@ -244,7 +248,7 @@ CREATE table variants (
             tgt += time.time() - t0
 
             t0 = time.time()
-            ann = SnpEff.top_severity(v.INFO_get('ANN').split(","))
+            ann = VEP.top_severity(info.get('CSQ').split(","))
             if isinstance(ann, list):
                 ann = ann[0]
 
