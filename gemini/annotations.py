@@ -57,6 +57,12 @@ def get_anno_files( args ):
     return annos
 
 class ClinVarInfo(object):
+    __slots__ = ("clinvar_dbsource", "clinvar_dbsource_id", "clinvar_origin",
+                 "clinvar_sig", "clinvar_dsdb", "clinvar_dsdbid",
+                 "clinvar_disease_name", "clinvar_disease_acc",
+                 "clinvar_in_omim", "clinvar_in_locus_spec_db",
+                 "clinvar_on_diag_assay", "clinvar_causal_allele",
+                 "origin_code_map", "sig_code_map")
     def __init__(self):
         self.clinvar_dbsource = None
         self.clinvar_dbsource_id = None

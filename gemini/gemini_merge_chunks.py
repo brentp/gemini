@@ -1,157 +1,123 @@
 #!/usr/bin/env python
 import os
 import shutil
-import sqlite3
 import sys
 import uuid
 
+import sqlalchemy
 import database as gemini_db
 import gemini_load_chunk
 
 
-def append_variant_info(main_curr, chunk_db):
+def _run(session, chunk_db, *cmds):
+    e = session.bind
+    connection = e.raw_connection()
+
+    cursor = connection.cursor()
+
+    cmd = "attach ? as toMerge"
+    cursor.execute(cmd, (chunk_db,))
+    session.begin(subtransactions=True)
+
+    for cmd in cmds:
+        cursor.execute(cmd)
+
+    cmd = "detach toMerge"
+    cursor.execute(cmd)
+
+    session.commit()
+
+
+def append_variant_info(session, chunk_db):
     """
     Append the variant and variant_info data from a chunk_db
     to the main database.
     """
+    _run(session, chunk_db, "INSERT INTO variants SELECT * FROM toMerge.variants",
+            "INSERT INTO variant_impacts SELECT * FROM toMerge.variant_impacts")
 
-    cmd = "attach ? as toMerge"
-    main_curr.execute(cmd, (chunk_db, ))
-
-    main_curr.execute("BEGIN TRANSACTION")
-    cmd = "INSERT INTO variants SELECT * FROM toMerge.variants"
-    main_curr.execute(cmd)
-
-    cmd = \
-        "INSERT INTO variant_impacts SELECT * FROM toMerge.variant_impacts"
-    main_curr.execute(cmd)
-    main_curr.execute("END TRANSACTION")
-
-    cmd = "detach toMerge"
-    main_curr.execute(cmd)
-
-
-def append_sample_genotype_counts(main_curr, chunk_db):
+def append_sample_genotype_counts(session, chunk_db):
     """
     Append the sample_genotype_counts from a chunk_db
     to the main database.
     """
-    cmd = "attach ? as toMerge"
-    main_curr.execute(cmd, (chunk_db, ))
-
-    cmd = "INSERT INTO sample_genotype_counts \
-           SELECT * FROM toMerge.sample_genotype_counts"
-    main_curr.execute(cmd)
-
-    cmd = "detach toMerge"
-    main_curr.execute(cmd)
+    _run(session, chunk_db, "INSERT INTO sample_genotype_counts \
+           SELECT * FROM toMerge.sample_genotype_counts")
 
 
-def append_sample_info(main_curr, chunk_db):
+def append_sample_info(session, chunk_db):
     """
     Append the sample info from a chunk_db
     to the main database.
     """
-    cmd = "attach ? as toMerge"
-    main_curr.execute(cmd, (chunk_db, ))
-
-    cmd = "create table samples as select * from toMerge.samples where 1=0"
-    main_curr.execute(cmd)
-
-    cmd = "INSERT INTO samples SELECT * FROM toMerge.samples"
-    main_curr.execute(cmd)
-
-    cmd = "detach toMerge"
-    main_curr.execute(cmd)
+    _run(session, chunk_db, "create table samples as select * from toMerge.samples where 1=0",
+                            "INSERT INTO samples SELECT * FROM toMerge.samples")
 
 
-def append_resource_info(main_curr, chunk_db):
+def append_resource_info(session, chunk_db):
     """
     Append the resource info from a chunk_db
     to the main database.
     """
-    cmd = "attach ? as toMerge"
-    main_curr.execute(cmd, (chunk_db, ))
-
     cmd = "INSERT INTO resources SELECT * FROM toMerge.resources"
-    main_curr.execute(cmd)
-
-    cmd = "detach toMerge"
-    main_curr.execute(cmd)
+    _run(session, chunk_db, cmd)
 
 
-def append_version_info(main_curr, chunk_db):
+def append_version_info(session, chunk_db):
     """
     Append the version info from a chunk_db
     to the main database.
     """
-    cmd = "attach ? as toMerge"
-    main_curr.execute(cmd, (chunk_db, ))
-
     cmd = "INSERT INTO version SELECT * FROM toMerge.version"
-    main_curr.execute(cmd)
+    _run(session, chunk_db, cmd)
 
-    cmd = "detach toMerge"
-    main_curr.execute(cmd)
-
-def append_vcf_header(main_curr, chunk_db):
+def append_vcf_header(session, chunk_db):
     """
     Append the vcf_header from a chunk_db
     to the main database.
     """
-    cmd = "attach ? as toMerge"
-    main_curr.execute(cmd, (chunk_db, ))
-
     cmd = "INSERT INTO vcf_header SELECT * FROM toMerge.vcf_header"
-    main_curr.execute(cmd)
+    _run(session, chunk_db, cmd)
 
-    cmd = "detach toMerge"
-    main_curr.execute(cmd)
-
-def append_gene_summary(main_curr, chunk_db):
+def append_gene_summary(session, chunk_db):
     """
     Append the gene_summary from a chunk_db
     to the main database.
     """
-    cmd = "attach ? as toMerge"
-    main_curr.execute(cmd, (chunk_db, ))
-
     cmd = "INSERT INTO gene_summary SELECT * FROM toMerge.gene_summary"
-    main_curr.execute(cmd)
+    _run(session, chunk_db, cmd)
 
-    cmd = "detach toMerge"
-    main_curr.execute(cmd)
-
-def append_gene_detailed(main_curr, chunk_db):
+def append_gene_detailed(session, chunk_db):
     """
     Append the gene_detailed from a chunk_db
     to the main database.
     """
-    cmd = "attach ? as toMerge"
-    main_curr.execute(cmd, (chunk_db, ))
-
     cmd = "INSERT INTO gene_detailed SELECT * FROM toMerge.gene_detailed"
-    main_curr.execute(cmd)
+    _run(session, chunk_db, cmd)
 
-    cmd = "detach toMerge"
-    main_curr.execute(cmd)
 
 def update_sample_genotype_counts(main_curr, chunk_db):
     """
     Update the main sample_genotype_counts table with the
     counts observed in one of the chunked databases (chunk_db)
     """
-    curr_db_conn = sqlite3.connect(chunk_db)
-    curr_db_conn.isolation_level = None
-    curr_db_conn.row_factory = sqlite3.Row
-    curr_db_curr = curr_db_conn.cursor()
+    from . import database
+
+    session, metadata = database.get_session_metadata(chunk_db)
+
+    if session.bind.name == "sqlite":
+        session.execute('PRAGMA synchronous=OFF')
+        session.execute('PRAGMA journal_mode=MEMORY')
 
     cmd = "SELECT sample_id, num_hom_ref, \
                   num_het, num_hom_alt, \
                   num_unknown FROM sample_genotype_counts"
-    curr_db_curr.execute(cmd)
-    for row in curr_db_curr:
-        main_curr.execute("""UPDATE sample_genotype_counts
+
+    conn = session.connection()
+    main_conn = main_curr.connection()
+
+    for row in conn.execute(cmd):
+        main_conn.execute("""UPDATE sample_genotype_counts
                           SET num_hom_ref = num_hom_ref + ?,
                               num_het = num_het + ?,
                               num_hom_alt = num_hom_alt + ?,
@@ -162,7 +128,7 @@ def update_sample_genotype_counts(main_curr, chunk_db):
                            row['num_hom_alt'],
                            row['num_unknown'],
                            row['sample_id']))
-    curr_db_curr.close()
+    session.close()
 
 
 def merge_db_chunks(args):
@@ -170,42 +136,43 @@ def merge_db_chunks(args):
     # open up a new database
     if os.path.exists(args.db):
         os.remove(args.db)
+    from . import database
 
-    main_conn = sqlite3.connect(args.db)
-    main_conn.isolation_level = None
-    main_curr = main_conn.cursor()
-    main_curr.execute('PRAGMA synchronous = OFF')
-    main_curr.execute('PRAGMA journal_mode=MEMORY')
+    gemini_db.create_tables(args.db, gemini_load_chunk.get_extra_effects_fields(args) if args.vcf else [])
+
+    session, metadata = database.get_session_metadata(args.db)
+
+    if session.bind.name == "sqlite":
+        session.execute('PRAGMA synchronous=OFF')
+        session.execute('PRAGMA journal_mode=MEMORY')
+
     # create the gemini database tables for the new DB
-    gemini_db.create_tables(main_curr, gemini_load_chunk.get_extra_effects_fields(args) if args.vcf else [])
-
     databases = []
-    for database in args.chunkdbs:
-        databases.append(database)
+    for db in args.chunkdbs:
+        databases.append(db)
 
-    for idx, database in enumerate(databases):
+    for idx, dba in enumerate(databases):
 
-        db = database[0]
+        db = dba[0]
 
-        append_variant_info(main_curr, db)
+        append_variant_info(session, db)
 
         # we only need to add these tables from one of the chunks.
         if idx == 0:
-            append_sample_genotype_counts(main_curr, db)
-            append_sample_info(main_curr, db)
-            append_resource_info(main_curr, db)
-            append_version_info(main_curr, db)
-            append_vcf_header(main_curr, db)
-            append_gene_summary(main_curr, db)
-            append_gene_detailed(main_curr, db)
+            append_sample_genotype_counts(session, db)
+            append_sample_info(session, db)
+            append_resource_info(session, db)
+            append_version_info(session, db)
+            append_vcf_header(session, db)
+            append_gene_summary(session, db)
+            append_gene_detailed(session, db)
         else:
-            update_sample_genotype_counts(main_curr, db)
+            update_sample_genotype_counts(session, db)
 
     if args.index:
-        gemini_db.create_indices(main_curr)
+        gemini_db.create_indices(session)
 
-    main_conn.commit()
-    main_curr.close()
+    session.close()
 
 
 def merge_chunks(parser, args):
@@ -229,9 +196,9 @@ def merge_chunks(parser, args):
                 for tmp_db in tmp_dbs:
                     os.remove(tmp_db)
             break
-        except sqlite3.OperationalError, e:
+        except sqlalchemy.exc.OperationalError, e:
             errors.append(str(e))
-            sys.stderr.write("sqlite3.OperationalError: %s\n" % e)
+            sys.stderr.write("OperationalError: %s\n" % e)
     else:
         raise Exception("Attempted workaround for SQLite locking issue on NFS "
                         "drives has failed. One possible reason is that the temp directory "

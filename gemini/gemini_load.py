@@ -4,7 +4,6 @@
 import os.path
 import shutil
 import sys
-import sqlite3
 
 import annotations
 import subprocess
@@ -107,20 +106,19 @@ def get_merge_chunks_cmd(chunks, db, tempdir=None, vcf=None, anno_type=None):
 
 def finalize_merged_db(tmp_db, db):
     ts = time.time()
+    from . import database
     st = datetime.datetime.fromtimestamp(ts).strftime('%Y-%m-%d %H:%M:%S')
     print st, "indexing final database."
 
-    main_conn = sqlite3.connect(tmp_db)
-    main_conn.isolation_level = None
-    main_curr = main_conn.cursor()
-    main_curr.execute('PRAGMA synchronous = OFF')
-    main_curr.execute('PRAGMA journal_mode=MEMORY')
+    main_session, main_metadata = database.get_session_metadata(tmp_db)
+    if main_session.bind.name == "sqlite":
+        main_session.execute('PRAGMA synchronous = OFF')
+        main_session.execute('PRAGMA journal_mode=MEMORY')
 
-    gemini_db.add_max_aaf(main_curr)
-    gemini_db.create_indices(main_curr)
+    gemini_db.add_max_aaf(main_session)
+    gemini_db.create_indices(main_session)
 
-    main_conn.commit()
-    main_curr.close()
+    main_session.close()
 
     shutil.move(tmp_db, db)
 
@@ -233,6 +231,7 @@ def load_chunks_multicore(grabix_file, args):
     chunk_vcfs = []
     chunk_dbs = []
     procs = []
+    # TODO: can use --skip-gene-tables for all but the first chunk.
 
     for chunk_num, chunk in chunk_steps:
         start, stop = chunk

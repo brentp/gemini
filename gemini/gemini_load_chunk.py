@@ -3,7 +3,7 @@
 # native Python imports
 import os.path
 import sys
-import sqlite3
+import sqlalchemy
 import numpy as np
 import shutil
 import uuid
@@ -101,17 +101,17 @@ class GeminiLoader(object):
     def store_vcf_header(self):
         """Store the raw VCF header.
         """
-        database.insert_vcf_header(self.c, self.vcf_reader.raw_header)
+        database.insert_vcf_header(self.c, self.metadata, self.vcf_reader.raw_header)
 
     def store_resources(self):
         """Create table of annotation resources used in this gemini database.
         """
-        database.insert_resources(self.c, annotations.get_resources(self.args))
+        database.insert_resources(self.c, self.metadata, annotations.get_resources(self.args))
 
     def store_version(self):
         """Create table documenting which gemini version was used for this db.
         """
-        database.insert_version(self.c, version.__version__)
+        database.insert_version(self.c, self.metadata, version.__version__)
 
     def _get_vid(self):
         if hasattr(self.args, 'offset'):
@@ -151,7 +151,8 @@ class GeminiLoader(object):
                 self.skipped += 1
                 continue
             (variant, variant_impacts, extra_fields) = self._prepare_variation(var)
-            variant.extend(extra_fields.get(e) for e in self._extra_effect_fields)
+
+            variant.update(extra_fields)
             obj_buffer.append(var)
             # add the core variant info to the variant buffer
             self.var_buffer.append(variant)
@@ -163,8 +164,8 @@ class GeminiLoader(object):
             if len(self.var_buffer) >= self.buffer_size:
                 sys.stderr.write("pid " + str(os.getpid()) + ": " +
                                  str(self.counter) + " variants processed.\n")
-                database.insert_variation(self.c, self.var_buffer)
-                database.insert_variation_impacts(self.c,
+                database.insert_variation(self.c, self.metadata, self.var_buffer)
+                database.insert_variation_impacts(self.c, self.metadata,
                                                   self.var_impacts_buffer)
                 # binary.genotypes.append(var_buffer)
                 # reset for the next batch
@@ -175,8 +176,8 @@ class GeminiLoader(object):
             self.counter += 1
         # final load to the database
         self.v_id -= 1
-        database.insert_variation(self.c, self.var_buffer)
-        database.insert_variation_impacts(self.c, self.var_impacts_buffer)
+        database.insert_variation(self.c, self.metadata, self.var_buffer)
+        database.insert_variation_impacts(self.c, self.metadata, self.var_impacts_buffer)
         sys.stderr.write("pid " + str(os.getpid()) + ": " +
                          str(self.counter) + " variants processed.\n")
         if self.args.passonly:
@@ -212,7 +213,7 @@ class GeminiLoader(object):
         # index our tables for speed
         database.create_indices(self.c)
         # commit data and close up
-        database.close_and_commit(self.c, self.conn)
+        database.close_and_commit(self.c)
 
     def _get_vcf_reader(self):
         return vcf.VCFReader(self.args.vcf)
@@ -280,14 +281,14 @@ class GeminiLoader(object):
         db_path = self.args.db if not hasattr(self.args, 'tmp_db') else self.args.tmp_db
         if os.path.exists(db_path):
             os.remove(db_path)
-        self.conn = sqlite3.connect(db_path)
-        self.conn.isolation_level = None
-        self.c = self.conn.cursor()
-        self.c.execute('PRAGMA synchronous = OFF')
-        self.c.execute('PRAGMA journal_mode=MEMORY')
         # create the gemini database tables for the new DB
-        database.create_tables(self.c, effect_fields or [])
-        database.create_sample_table(self.c, self.args)
+        self.c, self.metadata = database.create_tables(db_path, effect_fields or [])
+
+        session = self.c
+        if session.bind.name == "sqlite":
+            self.c.execute('PRAGMA synchronous = OFF')
+            self.c.execute('PRAGMA journal_mode=MEMORY')
+        database.create_sample_table(self.c, self.metadata, self.args)
 
     def _prepare_variation(self, var):
         """private method to collect metrics for a single variant (var) in a VCF file.
@@ -494,15 +495,16 @@ class GeminiLoader(object):
         # if so, build up a row for each of the impacts / transcript
         variant_impacts = []
         for idx, impact in enumerate(impacts or [], start=1):
-            var_impact = [self.v_id, idx, impact.gene,
-                          impact.transcript, impact.is_exonic,
-                          impact.is_coding, impact.is_lof,
-                          impact.exon, impact.codon_change,
-                          impact.aa_change, impact.aa_length,
-                          impact.biotype, impact.consequence,
-                          impact.so, impact.effect_severity,
-                          impact.polyphen_pred, impact.polyphen_score,
-                          impact.sift_pred, impact.sift_score]
+            var_impact = dict(variant_id=self.v_id, anno_id=idx, gene=impact.gene,
+                          transcript=impact.transcript, is_exonic=impact.is_exonic,
+                          is_coding=impact.is_coding, is_lof=impact.is_lof,
+                          exon=impact.exon, codon_change=impact.codon_change,
+                          aa_change=impact.aa_change, aa_length=impact.aa_length,
+                          biotype=impact.biotype, impact=impact.consequence,
+                          impact_so=impact.so, impact_severity=impact.effect_severity,
+                          polyphed_pred=impact.polyphen_pred, polyphen_score=impact.polyphen_score,
+                          sift_pred=impact.sift_pred,
+                          sift_score=impact.sift_score)
             variant_impacts.append(var_impact)
 
         # extract structural variants
@@ -513,92 +515,112 @@ class GeminiLoader(object):
         # construct the core variant record.
         # 1 row per variant to VARIANTS table
         chrom = var.CHROM if var.CHROM.startswith("chr") else "chr" + var.CHROM
-        variant = [chrom, var.start, var.end,
-                   vcf_id, self.v_id, anno_id, var.REF, ','.join([x or "" for x in var.ALT]),
-                   var.QUAL, filter, var.var_type,
-                   var.var_subtype, pack_blob(gt_bases), pack_blob(gt_types),
-                   pack_blob(gt_phases), pack_blob(gt_depths),
-                   pack_blob(gt_ref_depths), pack_blob(gt_alt_depths),
-                   pack_blob(gt_quals), pack_blob(gt_copy_numbers),
-                   pack_blob(gt_phred_ll_homref),
-                   pack_blob(gt_phred_ll_het),
-                   pack_blob(gt_phred_ll_homalt),
-                   call_rate, in_dbsnp,
-                   rs_ids,
-                   ci_left[0],
-                   ci_left[1],
-                   ci_right[0],
-                   ci_right[1],
-                   sv.get_length(),
-                   sv.is_precise(),
-                   sv.get_sv_tool(),
-                   sv.get_evidence_type(),
-                   sv.get_event_id(),
-                   sv.get_mate_id(),
-                   sv.get_strand(),
-                   clinvar_info.clinvar_in_omim,
-                   clinvar_info.clinvar_sig,
-                   clinvar_info.clinvar_disease_name,
-                   clinvar_info.clinvar_dbsource,
-                   clinvar_info.clinvar_dbsource_id,
-                   clinvar_info.clinvar_origin,
-                   clinvar_info.clinvar_dsdb,
-                   clinvar_info.clinvar_dsdbid,
-                   clinvar_info.clinvar_disease_acc,
-                   clinvar_info.clinvar_in_locus_spec_db,
-                   clinvar_info.clinvar_on_diag_assay,
-                   clinvar_info.clinvar_causal_allele,
-                   pfam_domain, cyto_band, rmsk_hits, in_cpg,
-                   in_segdup, is_conserved, gerp_bp, gerp_el,
-                   hom_ref, het, hom_alt, unknown,
-                   aaf, hwe_p_value, inbreeding_coeff, pi_hat,
-                   recomb_rate, gene, transcript, is_exonic,
-                   is_coding, is_lof, exon, codon_change, aa_change,
-                   aa_length, biotype, consequence, consequence_so, effect_severity,
-                   polyphen_pred, polyphen_score, sift_pred, sift_score,
-                   infotag.get_ancestral_allele(var), infotag.get_rms_bq(var),
-                   infotag.get_cigar(var),
-                   infotag.get_depth(var), infotag.get_strand_bias(var),
-                   infotag.get_rms_map_qual(var), infotag.get_homopol_run(var),
-                   infotag.get_map_qual_zero(var),
-                   infotag.get_num_of_alleles(var),
-                   infotag.get_frac_dels(var),
-                   infotag.get_haplotype_score(var),
-                   infotag.get_quality_by_depth(var),
-                   infotag.get_allele_count(var), infotag.get_allele_bal(var),
-                   infotag.in_hm2(var), infotag.in_hm3(var),
-                   infotag.is_somatic(var),
-                   infotag.get_somatic_score(var),
-                   esp.found, esp.aaf_EA,
-                   esp.aaf_AA, esp.aaf_ALL,
-                   esp.exome_chip, thousandG.found,
-                   thousandG.aaf_AMR, thousandG.aaf_EAS, thousandG.aaf_SAS,
-                   thousandG.aaf_AFR, thousandG.aaf_EUR,
-                   thousandG.aaf_ALL, grc,
-                   gms.illumina, gms.solid,
-                   gms.iontorrent, in_cse,
-                   encode_tfbs,
-                   encode_dnaseI.cell_count,
-                   encode_dnaseI.cell_list,
-                   encode_cons_seg.gm12878,
-                   encode_cons_seg.h1hesc,
-                   encode_cons_seg.helas3,
-                   encode_cons_seg.hepg2,
-                   encode_cons_seg.huvec,
-                   encode_cons_seg.k562,
-                   vista_enhancers,
-                   cosmic_ids,
-                   pack_blob(info),
-                   cadd_raw,
-                   cadd_scaled,
-                   fitcons,
-                   Exac.found,
-                   Exac.aaf_ALL,
-                   Exac.adj_aaf_ALL,
-                   Exac.aaf_AFR, Exac.aaf_AMR,
-                   Exac.aaf_EAS, Exac.aaf_FIN,
-                   Exac.aaf_NFE, Exac.aaf_OTH,
-                   Exac.aaf_SAS]
+        variant = dict(chrom=chrom, start=var.start, end=var.end,
+                   vcf_id=vcf_id, variant_id=self.v_id, anno_id=anno_id,
+                   ref=var.REF, alt=','.join([x or "" for x in var.ALT]),
+                   qual=var.QUAL, filter=filter, type=var.var_type,
+                   sub_type=var.var_subtype, gts=pack_blob(gt_bases), gt_types=pack_blob(gt_types),
+                   gt_phases=pack_blob(gt_phases), gt_depths=pack_blob(gt_depths),
+                   gt_ref_depths=pack_blob(gt_ref_depths), gt_alt_depths=pack_blob(gt_alt_depths),
+                   gt_quals=pack_blob(gt_quals), gt_copy_numbers=pack_blob(gt_copy_numbers),
+                   gt_phred_ll_homref=pack_blob(gt_phred_ll_homref),
+                   gt_phred_ll_het=pack_blob(gt_phred_ll_het),
+                   gt_phred_ll_homalt=pack_blob(gt_phred_ll_homalt),
+                   call_rate=call_rate, in_dbsnp=in_dbsnp,
+                   rs_ids=rs_ids,
+                   sv_cipos_start_left=ci_left[0],
+                   sv_cipos_end_left=ci_left[1],
+                   sv_cipos_start_right=ci_right[0],
+                   sv_cipos_end_right=ci_right[1],
+                   sv_length=sv.get_length(),
+                   sv_is_precise=sv.is_precise(),
+                   sv_tool=sv.get_sv_tool(),
+                   sv_evidence_type=sv.get_evidence_type(),
+                   sv_event_id=sv.get_event_id(),
+                   sv_mate_id=sv.get_mate_id(),
+                   sv_strand=sv.get_strand(),
+                   in_omim=clinvar_info.clinvar_in_omim,
+                   clinvar_sig=clinvar_info.clinvar_sig,
+                   clinvar_disease_name=clinvar_info.clinvar_disease_name,
+                   clinvar_dbsource=clinvar_info.clinvar_dbsource,
+                   clinvar_dbsource_id=clinvar_info.clinvar_dbsource_id,
+                   clinvar_origin=clinvar_info.clinvar_origin,
+                   clinvar_dsdb=clinvar_info.clinvar_dsdb,
+                   clinvar_dsdbid=clinvar_info.clinvar_dsdbid,
+                   clinvar_disease_acc=clinvar_info.clinvar_disease_acc,
+                   clinvar_in_locus_spec_db=clinvar_info.clinvar_in_locus_spec_db,
+                   clinvar_on_diag_assay=clinvar_info.clinvar_on_diag_assay,
+                   clinvar_causal_allele=clinvar_info.clinvar_causal_allele,
+                   pfam_domain=pfam_domain, cyto_band=cyto_band, rmsk=rmsk_hits,
+                   in_cpg_island=in_cpg,
+                   in_segdup=in_segdup, is_conserved=is_conserved,
+                   gerp_bp_score=gerp_bp, gerp_element_pval=gerp_el,
+                   num_hom_ref=hom_ref, num_het=het, num_hom_alt=hom_alt,
+                   num_unknown=unknown,
+                   aaf=aaf, hwe=hwe_p_value, inbreeding_coeff=inbreeding_coeff,
+                   pi=pi_hat,
+                   recomb_rate=recomb_rate, gene=gene, transcript=transcript,
+                   is_exonic=is_exonic,
+                   is_coding=is_coding, is_lof=is_lof, exon=exon,
+                   codon_change=codon_change, aa_change=aa_change,
+                   aa_length=aa_length, biotype=biotype,
+                   impact=consequence, impact_so=consequence_so,
+                   impact_severity=effect_severity,
+                   polyphen_pred=polyphen_pred, polyphen_score=polyphen_score,
+                   sift_pred=sift_pred, sift_score=sift_score,
+                   anc_allele=infotag.get_ancestral_allele(var), rms_bq=infotag.get_rms_bq(var),
+                   cigar=infotag.get_cigar(var),
+                   depth=infotag.get_depth(var), strand_bias=infotag.get_strand_bias(var),
+                   rms_map_qual=infotag.get_rms_map_qual(var), in_hom_run=infotag.get_homopol_run(var),
+                   num_mapq_zero=infotag.get_map_qual_zero(var),
+
+                   num_alleles=infotag.get_num_of_alleles(var),
+                   num_reads_w_dels=infotag.get_frac_dels(var),
+                   haplotype_score=infotag.get_haplotype_score(var),
+                   qual_depth=infotag.get_quality_by_depth(var),
+                   allele_count=infotag.get_allele_count(var), allele_bal=infotag.get_allele_bal(var),
+                   in_hm2=infotag.in_hm2(var), in_hm3=infotag.in_hm3(var),
+                   is_somatic=infotag.is_somatic(var),
+                   somatic_score=infotag.get_somatic_score(var),
+                   in_esp=esp.found, aaf_esp_ea=esp.aaf_EA,
+                   aaf_esp_aa=esp.aaf_AA, aaf_esp_all=esp.aaf_ALL,
+                   exome_chip=esp.exome_chip, in_1kg=thousandG.found,
+                   aaf_1kg_amr=thousandG.aaf_AMR,
+                   aaf_1kg_eas=thousandG.aaf_EAS,
+                   aaf_1kg_sas=thousandG.aaf_SAS,
+                   aaf_1kg_afr=thousandG.aaf_AFR,
+                   aaf_1kg_eur=thousandG.aaf_EUR,
+                   aaf_1kg_all=thousandG.aaf_ALL,
+                   grc=grc,
+                   gms_illumina=gms.illumina,
+                   gms_solid=gms.solid,
+                   gms_iontorrent=gms.iontorrent, in_cse=in_cse,
+                   encode_tfbs=encode_tfbs,
+                   encode_dnaseI_cell_count=encode_dnaseI.cell_count,
+                   encode_dnaseI_cell_list=encode_dnaseI.cell_list,
+                   encode_consensus_gm12878=encode_cons_seg.gm12878,
+                   encode_consensus_h1hesc=encode_cons_seg.h1hesc,
+                   encode_consensus_helas3=encode_cons_seg.helas3,
+                   encode_consensus_hepg2=encode_cons_seg.hepg2,
+                   encode_consensus_huvec=encode_cons_seg.huvec,
+                   encode_consensus_k562=encode_cons_seg.k562,
+                   vista_enhancers=vista_enhancers,
+                   cosmic_ids=cosmic_ids,
+                   info=pack_blob(info),
+                   cadd_raw=cadd_raw,
+                   cadd_scaled=cadd_scaled,
+                   fitcons=fitcons,
+                   in_exac=Exac.found,
+                   aaf_exac_all=Exac.aaf_ALL,
+                   aaf_adj_exac_all=Exac.adj_aaf_ALL,
+                   aaf_adj_exac_afr=Exac.aaf_AFR,
+                   aaf_adj_exac_amr=Exac.aaf_AMR,
+                   aaf_adj_exac_eas=Exac.aaf_EAS,
+                   aaf_adj_exac_fin=Exac.aaf_FIN,
+                   aaf_adj_exac_nfe=Exac.aaf_NFE,
+                   aaf_adj_exac_oth=Exac.aaf_OTH,
+
+                   aaf_adj_exac_sas=Exac.aaf_SAS)
 
         return variant, variant_impacts, extra_fields
 
@@ -629,7 +651,7 @@ class GeminiLoader(object):
                 # if there is no ped file given, just fill in the name and
                 # sample_id and set the other required fields to None
                 sample_list = [i, 0, sample, 0, 0, -9, -9]
-            database.insert_sample(self.c, sample_list)
+            database.insert_sample(self.c, self.metadata, sample_list)
 
     def _get_gene_detailed(self):
         """
@@ -655,7 +677,10 @@ class GeminiLoader(object):
                                  table.transcript_start,table.transcript_end,
                                  table.strand,table.synonym,table.rvis,table.mam_phenotype]
                 table_contents.append(detailed_list)
-        database.insert_gene_detailed(self.c, table_contents)
+                if i % 500 == 0:
+                    database.insert_gene_detailed(self.c, self.metadata, table_contents)
+                    table_contents = []
+        database.insert_gene_detailed(self.c, self.metadata, table_contents)
 
     def _get_gene_summary(self):
         """
@@ -683,12 +708,12 @@ class GeminiLoader(object):
                                 table.synonym,table.rvis,table.mam_phenotype,
                                 cosmic_census]
                 contents.append(summary_list)
-        database.insert_gene_summary(self.c, contents)
+        database.insert_gene_summary(self.c, self.metadata, contents)
 
     def update_gene_table(self):
         """
         """
-        gene_table.update_cosmic_census_genes(self.c, self.args)
+        gene_table.update_cosmic_census_genes(self.c, self.metadata, self.args)
 
     def _init_sample_gt_counts(self):
         """
@@ -716,16 +741,18 @@ class GeminiLoader(object):
         """
         Update the count of each gt type for each sample
         """
-        self.c.execute("BEGIN TRANSACTION")
-        for idx, gt_counts in enumerate(self.sample_gt_counts):
-            self.c.execute("""insert into sample_genotype_counts values \
-                            (?,?,?,?,?)""",
-                           [idx,
-                            int(gt_counts[HOM_REF]),  # hom_ref
-                            int(gt_counts[HET]),  # het
-                            int(gt_counts[HOM_ALT]),  # hom_alt
-                            int(gt_counts[UNKNOWN])])  # missing
-        self.c.execute("END")
+        tbl = self.metadata.tables["sample_genotype_counts"]
+        cols = database._get_cols(tbl)
+        assert cols == ["sample_id", "num_hom_ref", "num_het", "num_hom_alt",
+                "num_unknown"], cols
+
+        self.c.execute(tbl.insert(), [dict(zip(cols, (idx,
+                                                      int(gtc[HOM_REF]),
+                                                      int(gtc[HET]),
+                                                      int(gtc[HOM_ALT]),
+                                                      int(gtc[UNKNOWN]))))
+                                      for idx, gtc in enumerate(self.sample_gt_counts)])
+        self.c.commit()
 
 
 def load(parser, args):
@@ -753,6 +780,7 @@ def load(parser, args):
             gemini_loader.populate_from_vcf()
             gemini_loader.update_gene_table()
             # gemini_loader.build_indices_and_disconnect()
+            gemini_loader.c.commit()
 
             if not args.no_genotypes and not args.no_load_genotypes:
                 gemini_loader.store_sample_gt_counts()
@@ -760,8 +788,8 @@ def load(parser, args):
             if try_count > 0:
                 shutil.move(args.tmp_db, args.db)
             break
-        except sqlite3.OperationalError, e:
-            sys.stderr.write("sqlite3.OperationalError: %s\n" % e)
+        except sqlalchemy.exc.OperationalError, e:
+            sys.stderr.write("OperationalError: %s\n" % e)
     else:
         raise Exception(("Attempted workaround for SQLite locking issue on NFS "
             "drives has failed. One possible reason is that the temp directory "
