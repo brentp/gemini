@@ -5,7 +5,7 @@ import sys
 from itertools import repeat
 import contextlib
 
-from sqlalchemy import (Table, Column, Boolean, BLOB, Integer, String, Float,
+from sqlalchemy import (Table, Column, Boolean, BLOB, Binary, Integer, String, Float,
                         DECIMAL, MetaData, create_engine, bindparam, and_)
 from sqlalchemy.orm import mapper, create_session
 import sqlalchemy
@@ -105,6 +105,8 @@ def add_max_aaf(cursor):
     # see: https://github.com/arq5x/gemini/issues/520
     # skip finns
     cursor.execute('ALTER TABLE variants ADD COLUMN max_aaf_all REAL')
+    print "RETURNING from add_max_aaf(): make generic for postgres:", cursor
+    return
     cursor.execute('UPDATE variants set max_aaf_all = MAX(coalesce(aaf_esp_ea,-1), coalesce(aaf_esp_aa,-1), coalesce(aaf_1kg_amr,-1), coalesce(aaf_1kg_eas,-1), coalesce(aaf_1kg_sas,-1), coalesce(aaf_1kg_afr,-1), coalesce(aaf_1kg_eur,-1), coalesce(aaf_adj_exac_afr,-1), coalesce(aaf_adj_exac_amr,-1), coalesce(aaf_adj_exac_eas,-1), coalesce(aaf_adj_exac_nfe,-1), coalesce(aaf_adj_exac_sas,-1))')
     cursor.commit()
 
@@ -345,7 +347,7 @@ def create_tables(path, effect_fields=None):
               'float': Float(),
               'text': String,
               'bool': Boolean(),
-              'blob': BLOB(),
+              'blob': Binary(),
               'decimal(2,7)': DECIMAL(precision=7, asdecimal=True),
               'integer': Integer(),
               }
@@ -433,11 +435,14 @@ def _get_cols(tbl):
 def gen_gene_vals(cols, table_contents):
     for row in table_contents:
         d = dict(zip(cols, row))
-        d['is_hgnc'] = d['is_hgnc'] != '0'
+        d['is_hgnc'] = bool(d['is_hgnc'] != '0')
         if d['rvis_pct'] in (None, 'None'):
             d['rvis_pct'] = None
         else:
             d['rvis_pct'] = float(d['rvis_pct'])
+        if "in_cosmic_census" in d:
+            d['in_cosmic_census'] = bool(d['in_cosmic_census'])
+
         yield d
 
 def insert_gene_detailed(session, metadata, table_contents):
@@ -497,10 +502,13 @@ def update_gene_summary_w_cancer_census(session, metadata, genes):
     stmt = tbl.update().where(and_(tbl.c.gene==bindparam("gene_"),
                                    tbl.c.chrom==bindparam("chrom_"))
                               ).values(in_cosmic_census=bindparam("in_cosmic_census_"))
+    def fn(d):
+        d['in_cosmic_census'] = bool(d['in_cosmic_census'])
+        return d
 
     # need the trailing underscore for bindparam
     cols = ("in_cosmic_census_", "gene_", "chrom_")
-    session.execute(stmt, [dict(zip(cols, g)) for g in genes])
+    session.execute(stmt, [d(dict(zip(cols, g))) for g in genes])
 
 
 def get_session_metadata(path):

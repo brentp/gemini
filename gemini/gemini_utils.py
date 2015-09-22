@@ -5,22 +5,12 @@ from itertools import tee, ifilterfalse
 from gemini_subjects import Subject
 from sqlalchemy import text
 
-try:
-    from cyordereddict import OrderedDict
-except ImportError:
-    from collections import OrderedDict
 
-def get_gt_cols(cur):
-    keys = ('cid', 'name', 'type', '_', '_', '_')
-    gts = []
-    for row in cur.execute("pragma table_info(variants)"):
-        if not isinstance(row, dict):
-            d = dict(zip(keys, row))
-        else:
-            d = row
-        if d['name'][:2] == 'gt' and d['type'].lower() == 'blob':
-            gts.append(d['name'])
-    return gts
+def get_gt_cols(metadata):
+    from . import database
+    tbl = metadata.tables["variants"]
+    cols = database._get_cols(tbl)
+    return [c for c in cols if c in "gts gt_types gt_phases gt_depths gt_ref_depths gt_alt_depths gt_quals gt_copy_numbers gt_phred_ll_homref gt_phred_ll_het gt_phred_ll_homalt".split()]
 
 def map_samples_to_indices(session):
     """Return a dict mapping samples names (key)

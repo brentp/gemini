@@ -329,7 +329,7 @@ class GeminiLoader(object):
             cyto_band = annotations.get_cyto_info(var)
             rs_ids = annotations.get_dbsnp_info(var)
             clinvar_info = annotations.get_clinvar_info(var)
-            in_dbsnp = 0 if rs_ids is None else 1
+            in_dbsnp = not rs_ids is None
             rmsk_hits = annotations.get_rmsk_info(var)
             in_cpg = annotations.get_cpg_island_info(var)
             in_segdup = annotations.get_segdup_info(var)
@@ -526,7 +526,7 @@ class GeminiLoader(object):
                    gt_phred_ll_homref=pack_blob(gt_phred_ll_homref),
                    gt_phred_ll_het=pack_blob(gt_phred_ll_het),
                    gt_phred_ll_homalt=pack_blob(gt_phred_ll_homalt),
-                   call_rate=call_rate, in_dbsnp=in_dbsnp,
+                   call_rate=call_rate, in_dbsnp=bool(in_dbsnp),
                    rs_ids=rs_ids,
                    sv_cipos_start_left=ci_left[0],
                    sv_cipos_end_left=ci_left[1],
@@ -539,7 +539,7 @@ class GeminiLoader(object):
                    sv_event_id=sv.get_event_id(),
                    sv_mate_id=sv.get_mate_id(),
                    sv_strand=sv.get_strand(),
-                   in_omim=clinvar_info.clinvar_in_omim,
+                   in_omim=bool(clinvar_info.clinvar_in_omim),
                    clinvar_sig=clinvar_info.clinvar_sig,
                    clinvar_disease_name=clinvar_info.clinvar_disease_name,
                    clinvar_dbsource=clinvar_info.clinvar_dbsource,
@@ -552,8 +552,8 @@ class GeminiLoader(object):
                    clinvar_on_diag_assay=clinvar_info.clinvar_on_diag_assay,
                    clinvar_causal_allele=clinvar_info.clinvar_causal_allele,
                    pfam_domain=pfam_domain, cyto_band=cyto_band, rmsk=rmsk_hits,
-                   in_cpg_island=in_cpg,
-                   in_segdup=in_segdup, is_conserved=is_conserved,
+                   in_cpg_island=bool(in_cpg),
+                   in_segdup=bool(in_segdup), is_conserved=bool(is_conserved),
                    gerp_bp_score=gerp_bp, gerp_element_pval=gerp_el,
                    num_hom_ref=hom_ref, num_het=het, num_hom_alt=hom_alt,
                    num_unknown=unknown,

@@ -521,7 +521,6 @@ class GeminiQuery(object):
     def __init__(self, db, include_gt_cols=False,
                  out_format=DefaultRowFormat(None),
                  variant_id_getter=None):
-        assert os.path.exists(db), "%s does not exist." % db
 
         self.db = db
         self.query_executed = False
@@ -533,7 +532,7 @@ class GeminiQuery(object):
         self._connect_to_database()
 
         # save the gt_cols in the database and don't hard-code them anywhere.
-        self.gt_cols = util.get_gt_cols(self.conn)
+        self.gt_cols = util.get_gt_cols(self.metadata)
 
         # extract the column names from the sample table.
         # needed for gt-filter wildcard support.
@@ -699,7 +698,6 @@ class GeminiQuery(object):
             try:
                 row = GeminiRow(next(self.result_proxy), self)
             except Exception:
-                raise
                 self.conn.close()
                 raise StopIteration
 
