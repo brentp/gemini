@@ -1,8 +1,8 @@
 #!/usr/bin/env python
-import sqlite3
 import sys
 from collections import defaultdict
 from compiler import compile
+from sqlalchemy import text
 
 from .family import Family
 from gemini_constants import *
@@ -101,12 +101,9 @@ def get_families(db, selected_families=None):
     Query the samples table to return a list of Family
     objects that each contain all of the Subjects in a Family.
     """
-    conn = sqlite3.connect(db)
-    conn.isolation_level = None
-    conn.row_factory = sqlite3.Row
-    c = conn.cursor()
-
-    families_dict = Family.from_cursor(c)
+    from . import database
+    session, metadata = database.get_session_metadata(db)
+    families_dict = Family.from_cursor(session)
 
     # if the user has specified a set of selected families
     # to which the analysis should be restricted, then
@@ -136,13 +133,13 @@ def get_subjects(args, skip_filter=False):
     subjects_query argument to filter them.
     """
     gq = GeminiQuery.GeminiQuery(args.db)
-    query = "SELECT * FROM samples"
+    tbl = gq.metadata.tables["samples"]
+    q = tbl.select()
     if not skip_filter:
         if hasattr(args, 'sample_filter') and args.sample_filter:
-            query += " WHERE " + args.sample_filter
-    gq.c.execute(query)
+            q = q.where(text(args.sample_filter))
     samples_dict = {}
-    for row in gq.c:
+    for row in gq.session.execute(q):
         subject = Subject(row)
         samples_dict[subject.name] = subject
     return samples_dict

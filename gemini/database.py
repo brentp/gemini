@@ -507,6 +507,7 @@ def get_session_metadata(path):
     """return an engine"""
     engine = sqlalchemy.create_engine(get_path(path), isolation_level=None)
     metadata = MetaData(bind=engine)
+    metadata.reflect(bind=engine)
     session = create_session(bind=engine, autocommit=False, autoflush=False)
     return session, metadata
 

@@ -3,6 +3,7 @@ import collections
 from collections import defaultdict
 from itertools import tee, ifilterfalse
 from gemini_subjects import Subject
+from sqlalchemy import text
 
 try:
     from cyordereddict import OrderedDict
@@ -21,28 +22,28 @@ def get_gt_cols(cur):
             gts.append(d['name'])
     return gts
 
-def map_samples_to_indices(c):
+def map_samples_to_indices(session):
     """Return a dict mapping samples names (key)
        to sample indices in the numpy genotype arrays (value).
     """
-    c.execute("select sample_id, name from samples")
-    return {row['name']: row['sample_id'] - 1 for row in c}
+    citer = session.execute(text("select sample_id, name from samples"))
+    return {row['name']: row['sample_id'] - 1 for row in citer}
 
-def map_indices_to_samples(c):
+def map_indices_to_samples(session):
     """Return a dict mapping samples indices in the
        numpy arrays (key) to sample names.
     """
-    d = {k: v.name for (k, v) in map_indices_to_sample_objects(c).items()}
+    d = {k: v.name for (k, v) in map_indices_to_sample_objects(session).items()}
     assert sorted(d.keys()) == range(len(d))
     return [d[i] for i in range(len(d))]
 
-def map_indices_to_sample_objects(c):
-    c.execute("select * from samples")
-    return {row['sample_id'] - 1: Subject(row) for row in c}
+def map_indices_to_sample_objects(session):
+    citer = session.execute("select * from samples")
+    return {row['sample_id'] - 1: Subject(row) for row in citer}
 
-def map_samples_to_sample_objects(c):
-    c.execute("select * from samples")
-    return {row['name']: Subject(row) for row in c}
+def map_samples_to_sample_objects(session):
+    citer = session.execute("select * from samples")
+    return {row['name']: Subject(row) for row in citer}
 
 def get_col_names_and_indices(sqlite_description, ignore_gt_cols=False):
     """Return a list of column namanes and a list of the row indices.

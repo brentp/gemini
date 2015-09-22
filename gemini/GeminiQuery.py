@@ -2,7 +2,6 @@
 
 import os
 import sys
-import sqlite3
 import re
 import compiler
 import collections
@@ -13,10 +12,13 @@ from itertools import chain
 flatten = chain.from_iterable
 import itertools as it
 
+import sqlalchemy
+from sqlalchemy import text
+
 # gemini imports
 import gemini_utils as util
 from gemini_constants import *
-from gemini_utils import (OrderedSet, OrderedDict, itersubclasses)
+from gemini_utils import (OrderedSet, itersubclasses)
 from .pdict import PDict
 import compression
 from sql_utils import ensure_columns, get_select_cols_and_rest
@@ -541,11 +543,11 @@ class GeminiQuery(object):
         self.sample_info = collections.defaultdict(list)
 
         # map sample names to indices. e.g. self.sample_to_idx[NA20814] -> 323
-        self.sample_to_idx = util.map_samples_to_indices(self.c)
+        self.sample_to_idx = util.map_samples_to_indices(self.session)
         # and vice versa. e.g., self.idx_to_sample[323] ->  NA20814
-        self.idx_to_sample = util.map_indices_to_samples(self.c)
-        self.idx_to_sample_object = util.map_indices_to_sample_objects(self.c)
-        self.sample_to_sample_object = util.map_samples_to_sample_objects(self.c)
+        self.idx_to_sample = util.map_indices_to_samples(self.session)
+        self.idx_to_sample_object = util.map_indices_to_sample_objects(self.session)
+        self.sample_to_sample_object = util.map_samples_to_sample_objects(self.session)
         self.formatter = out_format
         self.predicates = [self.formatter.predicate]
         self.sample_show_fields = ["variant_samples", "het_samples", "hom_alt_samples"]
@@ -695,8 +697,9 @@ class GeminiQuery(object):
         # can quickly exceed the stack.
         while (1):
             try:
-                row = GeminiRow(self.c.next(), self)
+                row = GeminiRow(next(self.result_proxy), self)
             except Exception:
+                raise
                 self.conn.close()
                 raise StopIteration
 
@@ -798,22 +801,18 @@ class GeminiQuery(object):
         """
         Establish a connection to the requested Gemini database.
         """
-        # open up a new database
-        if os.path.exists(self.db):
-            self.conn = sqlite3.connect(self.db)
-            self.conn.isolation_level = None
-            # allow us to refer to columns by name
-            #self.conn.row_factory = RowFactory
-            self.conn.row_factory = sqlite3.Row
-            self.c = self.conn.cursor()
-
+        from . import database
+        self.session, self.metadata = database.get_session_metadata(self.db)
+        self.conn = self.session.bind.raw_connection()
+        self.c = self.conn.cursor()
 
     def _collect_sample_table_columns(self):
         """
         extract the column names in the samples table into a list
         """
-        self.c.execute('select * from samples limit 1')
-        self.sample_column_names = [tup[0] for tup in self.c.description]
+        from . import database
+        tbl = self.metadata.tables["samples"]
+        return database._get_cols(tbl)
 
     def _is_gt_filter_safe(self, gt_filter=None):
         """
@@ -846,9 +845,12 @@ class GeminiQuery(object):
 
     def _execute_query(self):
         try:
-            self.c.execute(self.query)
-        except sqlite3.OperationalError as e:
-            msg = "SQLite error: {0}\n".format(e)
+            self.result_proxy = self.session.execute(text(self.query))
+            self.all_query_cols = [t[0] for t in self.result_proxy._cursor_description()
+                                   if not t[0][:2] == "gt" and ".gt" not in t[0]]
+            self.result_proxy = iter(self.result_proxy)
+        except sqlalchemy.exc.OperationalError as e:
+            msg = "Operatoinal error: {0}\n".format(e)
             print msg
             sys.stderr.write(msg)
             sys.exit("The query issued (%s) has a syntax error." % self.query)
@@ -875,11 +877,6 @@ class GeminiQuery(object):
             self.query = self._add_gt_cols_to_query()
             self._execute_query()
 
-            self.all_query_cols = [
-                str(tuple[0]) for tuple in self.c.description
-                if not tuple[0][:2] == "gt" and ".gt" not in tuple[0]
-                ]
-
             if "*" in self.select_columns:
                 self.select_columns.remove("*")
                 self.all_columns_orig.remove("*")
@@ -892,8 +889,7 @@ class GeminiQuery(object):
         # and as such, we don't need to do anything fancy.
         else:
             self._execute_query()
-            self.all_query_cols = [str(tuple[0]) for tuple in self.c.description
-                    if not tuple[0][:2] == "gt"]
+
             self.report_cols = self.all_query_cols
 
     def _correct_genotype_col(self, raw_col):
@@ -927,11 +923,11 @@ class GeminiQuery(object):
         """
         query = 'SELECT sample_id, name FROM samples '
         if wildcard.strip() != "*":
-           query += ' WHERE ' + wildcard
+            query += ' WHERE ' + wildcard
 
-        sample_info = [] # list of sample_id/name tuples
-        self.c.execute(query)
-        for row in self.c:
+        sample_info = []  # list of sample_id/name tuples
+        citer = self.session.execute(text(query))
+        for row in citer:
             # sample_ids are 1-based but gt_* indices are 0-based
             sample_info.append((int(row['sample_id']) - 1, str(row['name'])))
         return sample_info
