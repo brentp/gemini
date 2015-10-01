@@ -8,9 +8,14 @@ from sqlalchemy import text
 
 def get_gt_cols(metadata):
     from . import database
-    tbl = metadata.tables["variants"]
+    gt_cols = "gts gt_types gt_phases gt_depths gt_ref_depths gt_alt_depths gt_quals gt_copy_numbers gt_phred_ll_homref gt_phred_ll_het gt_phred_ll_homalt".split()
+    try:
+        tbl = metadata.tables["variants"]
+    except KeyError:
+        return gt_cols
+
     cols = database._get_cols(tbl)
-    return [c for c in cols if c in "gts gt_types gt_phases gt_depths gt_ref_depths gt_alt_depths gt_quals gt_copy_numbers gt_phred_ll_homref gt_phred_ll_het gt_phred_ll_homalt".split()]
+    return [c for c in cols if c in gt_cols]
 
 def map_samples_to_indices(session):
     """Return a dict mapping samples names (key)
