@@ -508,7 +508,7 @@ def update_gene_summary_w_cancer_census(session, metadata, genes):
 
     # need the trailing underscore for bindparam
     cols = ("in_cosmic_census_", "gene_", "chrom_")
-    session.execute(stmt, [d(dict(zip(cols, g))) for g in genes])
+    session.execute(stmt, [fn(dict(zip(cols, g))) for g in genes])
 
 
 def get_session_metadata(path):
