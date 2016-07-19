@@ -1,6 +1,8 @@
 #!/usr/bin/env python
 import sys
+import re
 from collections import Counter, defaultdict
+from sqlalchemy.sql import select
 import GeminiQuery
 import sql_utils
 import compiler
@@ -32,46 +34,91 @@ class GeminiInheritanceModel(object):
 
     @property
     def query(self):
-        if self.args.columns is not None:
-            # the user only wants to report a subset of the columns
-            query = "SELECT " + str(self.args.columns) + " FROM variants "
-        else:
-            # report the kitchen sink
-            query = "SELECT chrom, start, end, * %s " \
-                + "FROM variants" % ", ".join(self.gt_cols)
+        """
+        7/19/2016: replace some of text processing with sqlalchemy and
+                   automatically join to variant_impacts (as vi). any
+                   columns that are in the vi table will be pulled from that
+                   table. e.g. if user requests:
+                       chrom,start,end,gene,impact_severity
+                    then gene and impact severity will be pulled from the
+                    variant_impacts table. Users can also explicitly request
+                    vi columns with "vi.gene".
 
-        query = sql_utils.ensure_columns(query, ['variant_id', 'gene'])
+                    This could slow things down because it requires a join.
+                    This also means that we must group by transcript
+        """
+
+        def _vistrip(col):
+            if col[:3] == "vi.": col = col[3:]
+            return col
+
+        variants = self.gq.metadata.tables["variants"]
+        variant_impacts = self.gq.metadata.tables["variant_impacts"]
+        vi_names = [x.name for x in variant_impacts.columns]
+        # allows specifying vi.gene, directly.
+        vi_names += ["vi." + x.name for x in variant_impacts.columns]
+        v_names = set([x.name for x in variants.columns])
+
+        vi = variant_impacts.alias('vi')
+
+        cols = [x.strip() for x in (self.args.columns or "chrom,start,end,*").split(",")]
+        if not 'variant_id' in cols or 'vi.variant_id' in cols:
+            cols.append('variant_id')
+        if not 'transcript' in cols or 'vi.transcript' in cols:
+            cols.append('transcript')
+
+        # need to check this before we do the join or we get empty result-set
+        has_vi = self.gq.conn.execute(vi.select()).first()
+
+        if has_vi:
+
+            q = select([getattr((variants.c if not col in vi_names else vi.c), _vistrip(col)) for col in cols])
+            # join
+            q = q.where(variants.c.variant_id == vi.c.variant_id)
+            query = str(q)
+
+            if self.args.filter is not None:
+                # now if they specified, e.g. is_coding, change to vi.is_coding
+                def fn(match):
+                    v = match.group()
+                    if v in vi_names:
+                        return "vi." + v
+                    if v in v_names:
+                        return "variants." + v
+                    return v
+                self.args.filter = re.compile(r"[\w|_|\.]+").sub(fn, self.args.filter)
+
+        else:
+            q = select([getattr(variants.c, col) for col in cols])
+            query = str(q) + " WHERE 1 "
+
+
         # add any non-genotype column limits to the where clause
         if self.args.filter:
-            query += " WHERE " + self.args.filter
+            query += " AND " + self.args.filter
 
         if hasattr(self.args, 'X'):
             if self.args.X == []:
                 self.args.X = ['chrX', 'X']
             part = "chrom IN (%s)" % ", ".join("'%s'" % x for x in self.args.X)
-            if " WHERE " in query:
-                query += " AND " + part
-            else:
-                query += " WHERE " + part
+            query += " AND " + part
 
         # auto_rec and auto_dom candidates should be limited to
         # variants affecting genes.
         if self.model in ("auto_rec", "auto_dom", "comp_het") or \
            (self.model == "de_novo" and self.args.min_kindreds is not None):
 
-            # we require the "gene" column for the auto_* tools
-            if " WHERE " in query:
-                query += " AND gene is not NULL"
-            else:
-                query += " WHERE gene is not NULL"
+            # we require the "transcript" column for the auto_* tools
+            query += (" AND %s is not NULL" % ("vi.transcript" if has_vi else "transcript"))
 
-        # only need to order by gene for comp_het and when min_kindreds is used.
+        # only need to order by transcript for comp_het and when min_kindreds is used.
         if self.model == "comp_het" or not (
                 self.args.min_kindreds in (None, 1)
                 and (self.args.families is None
                      or not "," in self.args.families)):
-            query += " ORDER by chrom, gene"
+            query += " ORDER by chrom," + ("vi.transcript" if has_vi else "transcript")
 
+        #sys.stderr.write(query + "\n")
         return query
 
     def bcolz_candidates(self):
@@ -121,7 +168,7 @@ class GeminiInheritanceModel(object):
 
     def gene_candidates(self):
 
-        for gene, candidates in self.gen_candidates(group_key="gene"):
+        for gene, candidates in self.gen_candidates(group_key="transcript"):
             yield gene, candidates
 
     def set_family_info(self):
@@ -316,7 +363,7 @@ class XRec(GeminiInheritanceModel):
     model = "x_rec"
 
     def candidates(self):
-        for g, li in self.gen_candidates('gene'):
+        for g, li in self.gen_candidates('transcript'):
             yield g, li
 
 class XDenovo(XRec):
@@ -330,7 +377,7 @@ class AutoDom(GeminiInheritanceModel):
     model = "auto_dom"
 
     def candidates(self):
-        for g, li in self.gen_candidates('gene'):
+        for g, li in self.gen_candidates('transcript'):
             yield g, li
 
 
@@ -343,7 +390,7 @@ class DeNovo(GeminiInheritanceModel):
 
     def candidates(self):
         kins = self.args.min_kindreds
-        for g, li in self.gen_candidates('gene' if kins is not None else None):
+        for g, li in self.gen_candidates('transcript' if kins is not None else None):
             yield g, li
 
 

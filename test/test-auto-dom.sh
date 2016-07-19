@@ -19,11 +19,11 @@ WDR37	chr10	1142208	1142209	T	C	stop_lost	HIGH	2	3	3_dad(3_dad;affected),3_mom(3
 ASAH2C	chr10	48003991	48003992	C	T	missense_variant	MED	3	3	3_dad(3_dad;affected),3_mom(3_mom;unknown),3_kid(3_kid;affected)	C/T,C/C,C/T	3_dad,3_kid	2
 ASAH2C	chr10	48003991	48003992	C	T	missense_variant	MED	3	2	2_dad(2_dad;unaffected),2_mom(2_mom;affected),2_kid(2_kid;affected)	C/C,C/T,C/T	2_mom,2_kid	2
 ASAH2C	chr10	48004991	48004992	C	T	missense_variant	MED	4	3	3_dad(3_dad;affected),3_mom(3_mom;unknown),3_kid(3_kid;affected)	C/T,C/C,C/T	3_dad,3_kid	2
-ASAH2C	chr10	48004991	48004992	C	T	missense_variant	MED	4	2	2_dad(2_dad;unaffected),2_mom(2_mom;affected),2_kid(2_kid;affected)	C/C,C/T,C/T	2_mom,2_kid	2
-SPRN	chr10	135336655	135336656	G	A	intron_variant	LOW	5	3	3_dad(3_dad;affected),3_mom(3_mom;unknown),3_kid(3_kid;affected)	G/A,G/G,G/A	3_dad,3_kid	1" > exp
+ASAH2C	chr10	48004991	48004992	C	T	missense_variant	MED	4	2	2_dad(2_dad;unaffected),2_mom(2_mom;affected),2_kid(2_kid;affected)	C/C,C/T,C/T	2_mom,2_kid	2" > exp
 
 gemini autosomal_dominant  \
-    --columns "gene, chrom, start, end, ref, alt, impact, impact_severity" \
+    --columns "gene,chrom, start, end, ref, alt, impact, impact_severity" \
+	--filter "impact_severity != 'LOW'" \
 	--lenient \
     test.auto_dom.db > obs
 check obs exp
@@ -45,6 +45,7 @@ WDR37	chr10	1142208	1142209	T	C	stop_lost	HIGH	2	3	3_dad(3_dad;affected),3_mom(3
 
 gemini autosomal_dominant \
 	--columns "gene, chrom, start, end, ref, alt, impact, impact_severity" \
+	--filter "impact_severity != 'LOW'" \
 	--lenient \
 	--min-kindreds 2 test.auto_dom.db > obs
 check obs exp
@@ -102,10 +103,10 @@ WDR37	chr10	1142207	1142208	T	C	stop_lost	HIGH	2	3	3_dad(3_dad;affected),3_mom(3
 ASAH2C	chr10	48003991	48003992	C	T	missense_variant	MED	3	3	3_dad(3_dad;affected),3_mom(3_mom;unknown),3_kid(3_kid;affected)	C/T,C/C,C/T	3_dad,3_kid	2
 ASAH2C	chr10	48003991	48003992	C	T	missense_variant	MED	3	2	2_dad(2_dad;unaffected),2_mom(2_mom;affected),2_kid(2_kid;affected)	C/C,C/T,C/T	2_mom,2_kid	2
 ASAH2C	chr10	48004991	48004992	C	T	missense_variant	MED	4	3	3_dad(3_dad;affected),3_mom(3_mom;unknown),3_kid(3_kid;affected)	C/T,C/C,C/T	3_dad,3_kid	2
-ASAH2C	chr10	48004991	48004992	C	T	missense_variant	MED	4	2	2_dad(2_dad;unaffected),2_mom(2_mom;affected),2_kid(2_kid;affected)	C/C,C/T,C/T	2_mom,2_kid	2
-SPRN	chr10	135336655	135336656	G	A	intron_variant	LOW	5	3	3_dad(3_dad;affected),3_mom(3_mom;unknown),3_kid(3_kid;affected)	G/A,G/G,G/A	3_dad,3_kid	1" > exp
+ASAH2C	chr10	48004991	48004992	C	T	missense_variant	MED	4	2	2_dad(2_dad;unaffected),2_mom(2_mom;affected),2_kid(2_kid;affected)	C/C,C/T,C/T	2_mom,2_kid	2" > exp
 gemini autosomal_dominant  \
     --columns "gene, chrom, start, end, ref, alt, impact, impact_severity" \
+	--filter "impact_severity != 'LOW'" \
     --min-kindreds 1 \
 	--lenient \
     test.auto_dom.no_parents.db &> obs
@@ -127,6 +128,7 @@ WDR37	chr10	1142207	1142208	T	C	stop_lost	HIGH	1	2	2_dad(2_dad;unaffected),2_mom
 WDR37	chr10	1142207	1142208	T	C	stop_lost	HIGH	2	3	3_dad(3_dad;affected),3_mom(3_mom;unknown),3_kid(3_kid;affected)	T/C,T/C,T/C	3_dad,3_kid	2" > exp
 gemini autosomal_dominant  \
     --columns "gene, chrom, start, end, ref, alt, impact, impact_severity" \
+	--filter "impact_severity != 'LOW'" \
 	--lenient \
     --min-kindreds 2 \
     test.auto_dom.no_parents.db &> obs
@@ -146,10 +148,10 @@ WDR37	chr10	1142207	1142208	T	C	stop_lost	HIGH	2	3	3_dad(3_dad;affected),3_mom(3
 ASAH2C	chr10	48003991	48003992	C	T	missense_variant	MED	3	3	3_dad(3_dad;affected),3_mom(3_mom;unknown),3_kid(3_kid;affected)	C/T,C/C,C/T	3_dad,3_kid	2
 ASAH2C	chr10	48003991	48003992	C	T	missense_variant	MED	3	2	2_dad(2_dad;unaffected),2_mom(2_mom;affected),2_kid(2_kid;affected)	C/C,C/T,C/T	2_mom,2_kid	2
 ASAH2C	chr10	48004991	48004992	C	T	missense_variant	MED	4	3	3_dad(3_dad;affected),3_mom(3_mom;unknown),3_kid(3_kid;affected)	C/T,C/C,C/T	3_dad,3_kid	2
-ASAH2C	chr10	48004991	48004992	C	T	missense_variant	MED	4	2	2_dad(2_dad;unaffected),2_mom(2_mom;affected),2_kid(2_kid;affected)	C/C,C/T,C/T	2_mom,2_kid	2
-SPRN	chr10	135336655	135336656	G	A	intron_variant	LOW	5	3	3_dad(3_dad;affected),3_mom(3_mom;unknown),3_kid(3_kid;affected)	G/A,G/G,G/A	3_dad,3_kid	1" > exp
+ASAH2C	chr10	48004991	48004992	C	T	missense_variant	MED	4	2	2_dad(2_dad;unaffected),2_mom(2_mom;affected),2_kid(2_kid;affected)	C/C,C/T,C/T	2_mom,2_kid	2" > exp
 gemini autosomal_dominant  \
     --columns "gene, chrom, start, end, ref, alt, impact, impact_severity" \
+	--filter "impact_severity != 'LOW'" \
     --min-kindreds 1 \
 	--lenient \
     test.auto_dom.no_parents.2.db &> obs
@@ -173,6 +175,7 @@ WDR37	chr10	1142207	1142208	T	C	stop_lost	HIGH	2	3	3_dad(3_dad;affected),3_mom(3
 gemini autosomal_dominant  \
     --columns "gene, chrom, start, end, ref, alt, impact, impact_severity" \
 	--lenient \
+	--filter "impact_severity != 'LOW'" \
     --min-kindreds 2 \
     test.auto_dom.no_parents.2.db &> obs
 check obs exp
@@ -195,11 +198,11 @@ ASAH2C	chr10	48003991	48003992	C	T	missense_variant	MED	3	3	3_dad(3_dad;affected
 ASAH2C	chr10	48003991	48003992	C	T	missense_variant	MED	3	2	2_dad(2_dad;unaffected),2_mom(2_mom;affected),2_kid(2_kid;affected)	C/C,C/T,C/T	2_mom,2_kid	3
 ASAH2C	chr10	48004991	48004992	C	T	missense_variant	MED	4	1	1_dad(1_dad;unaffected),1_mom(1_mom;unaffected),1_kid(1_kid;affected)	C/C,C/C,C/T	1_kid	3
 ASAH2C	chr10	48004991	48004992	C	T	missense_variant	MED	4	3	3_dad(3_dad;affected),3_mom(3_mom;unknown),3_kid(3_kid;affected)	C/T,C/C,C/T	3_dad,3_kid	3
-ASAH2C	chr10	48004991	48004992	C	T	missense_variant	MED	4	2	2_dad(2_dad;unaffected),2_mom(2_mom;affected),2_kid(2_kid;affected)	C/C,C/T,C/T	2_mom,2_kid	3
-SPRN	chr10	135336655	135336656	G	A	intron_variant	LOW	5	3	3_dad(3_dad;affected),3_mom(3_mom;unknown),3_kid(3_kid;affected)	G/A,G/G,G/A	3_dad,3_kid	1" > exp
+ASAH2C	chr10	48004991	48004992	C	T	missense_variant	MED	4	2	2_dad(2_dad;unaffected),2_mom(2_mom;affected),2_kid(2_kid;affected)	C/C,C/T,C/T	2_mom,2_kid	3" > exp
 gemini autosomal_dominant  \
     --columns "gene, chrom, start, end, ref, alt, impact, impact_severity" \
     --min-kindreds 1 \
+	--filter "impact_severity != 'LOW'" \
 	--lenient \
     test.auto_dom.no_parents.3.db &> obs
 check obs exp
@@ -226,6 +229,7 @@ WDR37	chr10	1142207	1142208	T	C	stop_lost	HIGH	2	3	3_dad(3_dad;affected),3_mom(3
 gemini autosomal_dominant  \
     --columns "gene, chrom, start, end, ref, alt, impact, impact_severity" \
     --min-kindreds 2 \
+	--filter "impact_severity != 'LOW'" \
 	--lenient \
     test.auto_dom.no_parents.3.db &> obs
 check obs exp
@@ -252,6 +256,7 @@ WDR37	chr10	1142207	1142208	T	C	stop_lost	HIGH	2	3	3_dad(3_dad;affected),3_mom(3
 gemini autosomal_dominant  \
     --columns "gene, chrom, start, end, ref, alt, impact, impact_severity" \
     --min-kindreds 3 \
+	--filter "impact_severity != 'LOW'" \
 	--lenient \
     test.auto_dom.no_parents.3.db &> obs
 check obs exp
@@ -267,6 +272,7 @@ WARNING: no affecteds in family 3
 WARNING: no affecteds in family 2" > exp
 gemini autosomal_dominant  \
     --columns "gene, chrom, start, end, ref, alt, impact, impact_severity" \
+	--filter "impact_severity != 'LOW'" \
     --min-kindreds 1 \
 	--lenient \
     test.auto_dom.no_parents.4.db &> obs
@@ -312,13 +318,13 @@ ASAH2C	chr10	48003991	48003992	C	T	missense_variant	MED	3	3	3_dad(3_dad;affected
 ASAH2C	chr10	48003991	48003992	C	T	missense_variant	MED	3	2	2_dad(2_dad;unaffected),2_mom(2_mom;affected),2_kid(2_kid;affected)	C/C,C/T,C/T	2_mom,2_kid	2
 ASAH2C	chr10	48004991	48004992	C	T	missense_variant	MED	4	3	3_dad(3_dad;affected),3_mom(3_mom;unknown),3_kid(3_kid;affected)	C/T,C/C,C/T	3_dad,3_kid	2
 ASAH2C	chr10	48004991	48004992	C	T	missense_variant	MED	4	2	2_dad(2_dad;unaffected),2_mom(2_mom;affected),2_kid(2_kid;affected)	C/C,C/T,C/T	2_mom,2_kid	2
-SPRN	chr10	135336655	135336656	G	A	intron_variant	LOW	5	3	3_dad(3_dad;affected),3_mom(3_mom;unknown),3_kid(3_kid;affected)	G/A,G/G,G/A	3_dad,3_kid	1
 WDR37	chr10	1142207	1142208	T	C	stop_lost	HIGH	1	3	3_dad(3_dad;affected),3_mom(3_mom;unknown),3_kid(3_kid;affected)	T/C,T/T,T/C	3_dad,3_kid	2
 WDR37	chr10	1142207	1142208	T	C	stop_lost	HIGH	1	2	2_dad(2_dad;unaffected),2_mom(2_mom;affected),2_kid(2_kid;affected)	T/T,T/C,T/C	2_mom,2_kid	2
 WDR37	chr10	1142208	1142209	T	C	stop_lost	HIGH	2	3	3_dad(3_dad;affected),3_mom(3_mom;unknown),3_kid(3_kid;affected)	T/C,T/C,T/C	3_dad,3_kid	2" > exp
 gemini autosomal_dominant  \
     --columns "gene, chrom, start, end, ref, alt, impact, impact_severity" \
     --families 2,3 \
+	--filter "impact_severity != 'LOW'" \
 	--lenient \
     test.auto_dom.db &> obs
 check obs exp
@@ -332,10 +338,10 @@ echo "gene	chrom	start	end	ref	alt	impact	impact_severity	variant_id	family_id	f
 WDR37	chr10	1142207	1142208	T	C	stop_lost	HIGH	1	3	3_dad(3_dad;affected),3_mom(3_mom;unknown),3_kid(3_kid;affected)	T/C,T/T,T/C	3_dad,3_kid	1
 WDR37	chr10	1142208	1142209	T	C	stop_lost	HIGH	2	3	3_dad(3_dad;affected),3_mom(3_mom;unknown),3_kid(3_kid;affected)	T/C,T/C,T/C	3_dad,3_kid	1
 ASAH2C	chr10	48003991	48003992	C	T	missense_variant	MED	3	3	3_dad(3_dad;affected),3_mom(3_mom;unknown),3_kid(3_kid;affected)	C/T,C/C,C/T	3_dad,3_kid	1
-ASAH2C	chr10	48004991	48004992	C	T	missense_variant	MED	4	3	3_dad(3_dad;affected),3_mom(3_mom;unknown),3_kid(3_kid;affected)	C/T,C/C,C/T	3_dad,3_kid	1
-SPRN	chr10	135336655	135336656	G	A	intron_variant	LOW	5	3	3_dad(3_dad;affected),3_mom(3_mom;unknown),3_kid(3_kid;affected)	G/A,G/G,G/A	3_dad,3_kid	1" > exp
+ASAH2C	chr10	48004991	48004992	C	T	missense_variant	MED	4	3	3_dad(3_dad;affected),3_mom(3_mom;unknown),3_kid(3_kid;affected)	C/T,C/C,C/T	3_dad,3_kid	1" > exp
 gemini autosomal_dominant  \
     --columns "gene, chrom, start, end, ref, alt, impact, impact_severity" \
+	--filter "impact_severity != 'LOW'" \
     --families 3 \
 	--lenient \
     test.auto_dom.db &> obs
